@@ -96,7 +96,7 @@ def get_player_stats(player_name:str):
         turnovers = dat['turnover']
         minutes = dat['min']
         fg3m = dat['fg3m']
-        ftm = dat['fta']
+        ftm = dat['ftm']
         fantasy = points + 1.2*rebounds + 1.5*assists + 3*steals + 3*blocks - turnovers
 
         if int(minutes) < 1:

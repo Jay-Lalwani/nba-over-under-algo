@@ -1,10 +1,14 @@
 import pandas as pd
 import numpy as np
-import requests
 from pandas import json_normalize
-import requests
+import urllib.request
+import json
 import pickle
 import time
+import json
+from tqdm import tqdm
+
+# CAUTION, BEFORE USE DOWNLOAD "projections.json" FROM https://api.prizepicks.com/projections
 
 def load(filename):
     infile = open(filename, 'rb')
@@ -18,22 +22,21 @@ def save(s, filename):
     outfile.close()
 
 def getPicks():
-    params = (
-        ('league_id', '7'),
-        ('per_page', '250'),
-        ('single_stat', 'true'),
-    )
-
-
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36'
-        }
-    session = requests.Session()
-    response = session.get('https://api.prizepicks.com/projections', data=params, headers=headers)
+    # params = (
+    #     ('league_id', '7'),
+    #     ('per_page', '250'),
+    #     ('single_stat', 'true'),
+    # )
+    # headers = {
+    # 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36'
+    # }
     
-    print(response.status_code)
-    data = response.json()
-
+    # session = requests.Session()
+    # response = session.get('https://api.prizepicks.com/projections', data=params, headers=headers)
+    # data = response.json()
+    
+    data = json.load(open('projections.json', 'r'))
+    
     players_df = json_normalize(data['included'])
     players_df = players_df[players_df['type'] == 'new_player']
 
@@ -58,8 +61,8 @@ def getPicks():
 
 def get_team_abbreviation():
     url = 'https://www.balldontlie.io/api/v1/teams'
-    response = requests.get(url)
-    teams = response.json()
+    response = urllib.request.urlopen(url)
+    teams = json.loads(response.read().decode())
 
     team_abbreviation = {}
     for team in teams['data']:
@@ -68,17 +71,20 @@ def get_team_abbreviation():
     return team_abbreviation
 
 def get_player_stats(player_name:str):
-    
-    url = f'https://www.balldontlie.io/api/v1/players?search={player_name}'
-    response = requests.get(url)
-    players = response.json()
 
+    url_name = player_name.replace(' ', '%20')
+    url = f'https://www.balldontlie.io/api/v1/players?search={url_name}'
+
+    response = urllib.request.urlopen(url)
+    players = json.loads(response.read().decode())
+    
     player_id = players['data'][0]['id']
     team_id = players['data'][0]['team']['id']
-
+    
     url = f'https://www.balldontlie.io/api/v1/stats?seasons[]=2022&player_ids[]={player_id}'
-    response = requests.get(url)
-    stats = response.json()
+    
+    response = urllib.request.urlopen(url)
+    stats = json.loads(response.read().decode())
 
     games = []
 
@@ -109,12 +115,15 @@ def get_player_stats(player_name:str):
     df.sort_values(by=['Date'], inplace=True, ignore_index=True)
     return df
 
-def pick(bet_info, pr:bool=False):
+def pick(bet_info, sleep:bool=False, pr:bool=False):
     if bet_info["name"] in visited:
         df = visited[bet_info["name"]]
     else: 
         df = get_player_stats(bet_info["name"])
         visited[bet_info["name"]] = df
+        
+        if sleep:
+            time.sleep(2)
         
     stat_type = bet_info["stat_type"]
     line = float(bet_info["line"])
@@ -148,28 +157,38 @@ def pick(bet_info, pr:bool=False):
         print("Prediction: ", prediction)
         print()
     
-    save(visited, 'visited.pkl')
-    
     return ((abs(z_score), prediction, bet_info["name"], stat_type, line))
 
 def getBet(df, player, stat_type):
     pick(df.loc[(df['name'] == player) & (df['stat_type'] == stat_type)].iloc[0], pr=True)
 
-def findBestPicks(n:int=10):
+def getBetManual(player, stat_type, line, opp, pos):
+    pick({"name": player, "stat_type": stat_type, "line": line, "opposing_team": opp, "position": pos}, pr=True)
+
+def findBestPicks(n:int=10, one:bool=False, pr:bool=False):
+    sleep = True
+    if visited:
+        sleep = False
+
+    notFound = set()
     
     df = getPicks()
-    save(df, 'prizepicks.pkl')
-    
-    # df = load('prizepicks.pkl')
-    
+
     picks = []
-    for index, row in df.iterrows():
+    print()
+    print("Gathering Data...")
+    for index, row in tqdm(df.iterrows(), total=df.shape[0]):
+        if row["name"] in notFound:
+            continue
         try:
-            temp = pick(row, pr=False)
-        except:
+            temp = pick(row, sleep, pr)
+        except Exception as e:
+            print(e, row["name"])
+            notFound.add(row["name"])
             continue
         picks.append(temp)
-        # time.sleep(1) if index % 5 == 0 else None
+            
+    save(visited, "visited.pkl")
         
     picks = sorted(picks)[-n:][::-1]
     print()
@@ -177,7 +196,8 @@ def findBestPicks(n:int=10):
     print()
     for p in picks:
         getBet(df, p[2], p[3])
-        input()
+        if one:
+            input()
     print()
     
 ABB = {
@@ -212,6 +232,8 @@ ABB = {
        29: 'UTA', 
        30: 'WAS'
                 }
+
 visited = {}
 # visited = load('visited.pkl')
+
 findBestPicks()
